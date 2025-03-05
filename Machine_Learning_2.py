@@ -3,7 +3,6 @@
 """
 Created on Thu Mar  7 14:56:36 2024
 
-@author: fabiankuonen
 
 @title: Linear Discriminant Analysis, Banknotes
 """
