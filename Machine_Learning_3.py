@@ -2,8 +2,6 @@
 # -*- coding: utf-8 -*-
 """
 Created on Thu Mar  7 16:28:21 2024
-
-@author: fabiankuonen
 """
 
 """
