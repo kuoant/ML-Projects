@@ -3,9 +3,6 @@
 """
 Created on Thu Feb 29 15:30:22 2024
 
-@author: fabiankuonen
-
-Introduction to Pandas and Data Preprocessing
 
 """
 
