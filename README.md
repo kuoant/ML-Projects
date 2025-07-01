@@ -18,4 +18,3 @@ A collection of machine learning coursework and assignments, organized by topic:
 
 ---
 
-Happy learning! 🌟
