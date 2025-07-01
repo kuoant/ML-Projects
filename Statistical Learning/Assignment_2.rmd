@@ -1,0 +1,262 @@
+---
+title: "Assignment 2"
+output: 
+  pdf_document:
+    latex_engine: pdflatex
+    keep_tex: true
+    pandoc_args: "--variable=geometry:margin=1in"
+documentclass: article
+classoption: a4paper
+author: "Kuonen"
+date: "2024-05-15"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.width = 5, fig.height = 4)
+knitr::opts_chunk$set(fig.align = 'center')
+knitr::opts_knit$set(concordance = FALSE) # correct (approximate) mapping of lines between .rmd and log-file
+options(width = 90)
+```
+
+\pagenumbering{arabic}
+
+## Problem 2
+
+### a)
+
+```{r Poisson, message = FALSE}
+
+# read data
+dv <- read.csv("dv.csv")
+
+# fit Poisson model
+poisson_model <- glm(visits ~ ., data=dv, family=poisson(link="log"))
+summary(poisson_model)
+
+```
+
+```{r Rootogram, message = FALSE}
+
+library("topmodels")
+library("countreg")
+
+# max visit is 9, the distribution is right truncated
+print(max(dv$visits))
+
+# plot the rootogram
+rootogram(poisson_model, style = "hanging", xlim = c(0, 9),  
+          main = "Poisson Model")
+axis(1, at = 1:9)
+
+```
+
+The hanging rootogram describes the fit of the Poisson regression by tacking observed frequencies (bars) to the fitted frequencies (red dots). Overall, it can be said that the Poisson model is not too bad and most of the observations fit more or less correctly. With the exception of 1 and 3 visits, all bars seem to be approximately hit or at least close to the dashed lines. But there is still room for improvement. On the one hand, there is a large number of people who have not visited the doctor at all, which is difficult for the Poisson regression to map. On the other hand, there is an underfit for people visiting the doctor once and a slight overfit for people who visited the doctor 2, 3 and 4 times. This can be tackled by accounting for the excess zeros and possible overdispersion using a hurdle model with e.g. negative binomial count distribution.
+
+\newpage
+
+### b)
+
+```{r Dispersiontest, message = FALSE}
+
+library(AER)
+# alternative: h(mu) = mu^2 (NB2)
+print(dispersiontest(poisson_model, trafo = 2))
+
+# alternative: h(mu) = mu (NB1)
+print(dispersiontest(poisson_model, trafo = 1))
+
+# alternative: h(mu) = mu (NB1) with phi = 1 + alpha
+print(dispersiontest(poisson_model))
+
+```
+
+The results of the 3 different overdispersion tests do not lead to a clear decision. The NB2 variant shows that $\alpha$ is significantly greater than 0, thus implying that overdispersion is present. In contrast, the two tests based on the NB1 variant are not significant. However, according to page 27, chapter 4, overdispersion is relevant for the inference of Poisson GLMs even if not yet significant in the formal tests. If in doubt, equidispersion should therefore not be relied upon. One should better consider choosing the negative binomial distribution to tackle the potential problem.
+
+\newpage
+
+### c)
+
+```{r Negative Binomial Hurdle Model, message = FALSE}
+
+# fit negative binomial hurdle model
+negbin_hurdle_model <- hurdle(visits ~ . | .,
+                              data=dv, dist="negbin", zero.dist="binomial")
+summary(negbin_hurdle_model)
+
+```
+
+```{r Rootogram_2, message = FALSE}
+
+#plot the updated rootogram
+rootogram(negbin_hurdle_model, style = "hanging", xlim = c(0, 9),
+           main = "Negative Binomial Hurdle Model")
+axis(1, at = 1:9)
+
+```
+
+The rootogram visualises the better fit. Thanks to the hurdle, the excess zeros are now modeled very precisely and the negative binomial distribution ensures that overdispersion is also properly taken into account. But the hurdle model comes with more freedom: Which distribution do we use for the zero part and which for the count part? Which regressors do we consider in the two parts? It is obvious that the choice is not a priori clear and at least somewhat arbitrary. But based on the concerns of excess zero and possible overdispersion, a hurdle model with negative binomial count part can be justified as it was developed to tackle those problems. I was interested in how scientists would choose their models in such a case, but it seems that opinions deviate quite a bit. Some authors prefer to keep the model as simple as possible, while others argue that one should choose a model which was developed to fulfill the purpose of solving the particular problem (e.g. www.statisticalhorizons.com/zero-inflated-models/ discusses this trade-off with regard to zero-inflated models).
+
+Therefore, I experimented with different regressors for the zero and count parts and chose different distributions. One could e.g. also model a geometric count part with Poisson zero distribution and alter the regressors. Results are then similar but the fit is slightly worse. And I ran a simple negative binomial regression without hurdle, which also performed worse. Note that the regressor "id" needs to be handled with care and causes trouble if included in the zero part. Usually, the variable ‘reduced’ is significant for the count part (also applies to other specifications of count part), while all or most variables are significant in the zero part.
+
+For the sake of completeness, I also recalculated some the metrics from the first assignment, which are also in favor of the more flexible hurdle model:
+
+```{r Metrics, message = FALSE}
+# Confusion matrices 
+tab1 <- table(round(fitted(poisson_model)), dv$visits) # Poisson Model
+print(tab1)
+
+tab2 <- table(round(fitted(negbin_hurdle_model)), dv$visits) # Hurdle Model
+print(tab2)
+
+# Accuracies
+print(sum(diag(tab1)) / sum(tab1))  # Poisson Model
+print(sum(diag(tab2)) / sum(tab2))  # Hurdle Model
+ 
+# AIC
+AIC(poisson_model)        # Poisson Model
+AIC(negbin_hurdle_model)  # Hurdle Model
+
+```
+
+
+\newpage
+
+# Problem 3
+
+### a)
+
+
+```{r Linear Regression, message = FALSE}
+
+# read data
+gr <- read.csv("gr.csv")
+
+# run ols
+ols <- lm(y ~ ., data=gr)
+
+# summary() does not make sense here, as the standard errors are not available
+# and over 30 parameters could not be estimated anyway
+print(coef(ols))
+```
+
+
+\newpage
+
+### b)
+
+```{r Ridge_Regression, message = FALSE}
+
+library(glmnet)
+
+# preprocessing data in order to use glmnet()
+mf <- model.frame(ols)
+X <- model.matrix(ols, mf)[,-1]
+y <- model.response(mf)
+grid <- seq(1e-1, 120, length = 1000)
+
+# for reproducibility
+set.seed(1) 
+
+# run ridge regression and plot MSE vs. log(lambda)
+ridge_regression <- cv.glmnet(X, y, alpha = 0, lambda=grid, nfolds = 10)
+plot(ridge_regression)
+
+
+```
+
+```{r Lambdas, message = FALSE}
+
+# optimal log(lambda), see plot
+print(log(ridge_regression$lambda.min))
+
+# log(lambda.1se), see plot
+print(log(ridge_regression$lambda.1se))
+
+```
+
+\newpage
+
+### c)
+
+```{r Lasso_Regression, message = FALSE}
+
+# determine the lambda grid
+grid <- seq(1e-1, 120, length = 1000)
+
+# for reproducibility
+set.seed(1) 
+
+# run ridge regression and plot MSE vs. log(lambda)
+lasso_regression <- cv.glmnet(X, y, alpha = 1, grid=grid, nfolds = 10)
+plot(lasso_regression)
+
+```
+
+
+```{r Lambdas_2, message = FALSE}
+
+# optimal log(lambda), see plot
+print(log(lasso_regression$lambda.min))
+
+# log(lambda.1se), see plot
+print(log(lasso_regression$lambda.1se))
+
+```
+
+\newpage
+
+### d)
+
+
+```{r Comparison_Coefficients, message = FALSE}
+
+# combine optimal coefficients into a matrix
+coefficients_matrix <- cbind(
+  coef(ols),
+  coef(ridge_regression, s = ridge_regression$lambda.min),
+  coef(lasso_regression, s = lasso_regression$lambda.min)
+)
+
+# round for better visualization
+rounded_coefficients <- round(coefficients_matrix, 4)
+
+# convert matrix into dataframe
+coefficients_df <- data.frame(
+  OLS = rounded_coefficients[,1],
+  Ridge = rounded_coefficients[,2],
+  Lasso = rounded_coefficients[,3]
+)
+
+# display first and last 10 rows
+head(coefficients_df, 10)
+tail(coefficients_df, 10)
+
+```
+
+Note that I deliberately only display the first and last 10 coefficients to prevent pages of output. I think that this still provides a reasonable insight in what is going on with regularization. The full output is stored in the dataframe and therefore also reproducible if created with the same seed.
+
+\newpage
+
+```{r Plot_Coefficients, message = FALSE}
+
+# exclude the intercept of each model
+coefficients_df_excluding_constant <- coefficients_df[-1, ]
+
+# extract first ten coeffs for sample visualization and plot them
+first_ten_coeffs <- head(coefficients_df_excluding_constant, 10)
+
+barplot(t(first_ten_coeffs), beside = TRUE, 
+        col = c("#1f77b4", "#ff7f0e", "#2ca02c"), 
+        main = "Sample Comparison of Coefficients",
+        ylab = "Coefficient Value")
+
+legend("topright", inset = c(0.05, 0.05), legend = colnames(first_ten_coeffs), 
+       fill = c("#1f77b4", "#ff7f0e", "#2ca02c"), bty = "n")
+
+```
+
+
+The resulting table matches the expectations. As mentioned on page 14, chapter 6, the inclusion of $\lambda >0$ makes the problem non-singular, even if $X^TX$ is not invertible (e.g. due to multicollinearity). This explains why we now have regularized estimators for parameters that are not available for OLS. Furthermore, we can see the shrinkage effect of ridge and lasso regression when compared to OLS. The parameters of ridge are usually (but not always) closer to 0 than those of OLS. This effect will be stronger as $\lambda$ increases, which could be seen if we would compare coefficients of the regularized regressions across different $\lambda$-values. Finally, we can see the shrinkage and model selection effect ("oracle" properties) of the lasso regression - the active $\beta$'s are recovered (at least with high probability) and regressors which are not useful are set to 0.
+
+

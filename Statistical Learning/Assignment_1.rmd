@@ -1,0 +1,230 @@
+---
+title: "Assignment 1 - Problem 2 - Kuonen"
+output: 
+  pdf_document:
+    latex_engine: pdflatex
+    keep_tex: true
+    pandoc_args: "--variable=geometry:margin=1in"
+documentclass: article
+classoption: a4paper
+date: "2024-03-29"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.width = 5, fig.height = 4)
+knitr::opts_chunk$set(fig.align = 'center')
+knitr::opts_knit$set(concordance = FALSE) # correct (approximate) mapping of lines between .rmd and log-file
+options(width = 90)
+```
+
+\pagenumbering{arabic}
+
+### a)
+
+The goal is to estimate the following logistic regression:
+
+$$ 
+\mathtt{z}_i = \beta_{0} + \beta_{1}\mathtt{gender}_i + \beta_{2}\mathtt{illness}_i + \beta_{3}\mathtt{reduced}_i +\beta_{4}\mathtt{freepoor}_i
+$$
+$$
+\mathtt{P(visit_i = 1 | \mathtt{x}_i)} = \Lambda(\mathtt{z}_i)
+$$
+
+
+```{r data, message = FALSE}
+
+# load data
+dv <- read.csv("dv.csv")
+
+# basic descriptive statistics
+summary(dv)
+
+# create binary visit variable
+dv$bin_visits <- as.numeric(dv$visits >= 1)
+
+# estimate logit model
+logit <- glm(bin_visits ~ gender + illness + reduced + freepoor, 
+             data=dv, family=binomial(link="logit"))
+
+```
+
+\newpage
+
+### b)
+
+```{r summary, message = FALSE}
+
+# output summary
+summary(logit)
+
+```
+
+We can directly interpret the sign of the coefficient, which is negative, in terms of the marginal effect. Thus, comparing a man to a woman, ceteris paribus, decreases the chances of having visited the doctor in the past 2 weeks. Furthermore, the variable "gender" is by construction a binary indicator, whether the person is male (=1) or female (=0). We can additionally have the following interpretation for those types of variables starting with the odds ratio:
+
+$$
+\text{odds ratio} = \exp((\mathbf{x}_a - \mathbf{x}_b)^T \boldsymbol{\beta})
+$$
+If we now only vary the binary regressor, the odds ratio simplifies to:
+
+$$
+\widehat{\text{odds ratio}} = exp({\hat{\beta}_{\text{gender}}}) = 0.674
+$$
+
+And consequently the relative change in odds ratio is equal to $exp({\hat{\beta}_{\text{gender}}}) - 1 = -0.326$. 
+
+Theoretically, we can check whether that is correct by calculating the odds directly from the contingency table (see below). But obviously that only holds in the case, where we do not have any additional regressors in our logit model. So we need to re-estimate a regression where the only explaining variable is "gender". As expected, we can see below that both methods yield the same outcome. 
+
+Now, comparing this new simpler logit model with the earlier "full" logit model, i.e. after controlling for the other explanatory variables, the odds ratio remain roughly the same but decrease a bit (full logit model 0.674 vs. simple logit model 0.587).
+
+
+```{r contigency, message = FALSE}
+
+# build the contingency table & calculate the odds ratio manually
+(tab <- xtabs(~ gender + bin_visits, data = dv))
+(tab <- prop.table(tab, 1))
+(tab <- tab[,2]/tab[,1])
+tab[2]/tab[1]
+
+
+```
+
+
+```{r simple logit, message = FALSE}
+
+# odds ratio is the same for the simple logit model and the contingency table
+aux <- glm(bin_visits ~ gender, data = dv, family = binomial)
+exp(coef(aux)[2])
+
+```
+
+\newpage
+
+### c)
+
+```{r prediction, message = FALSE}
+
+# create the new observation
+new_data <- data.frame(gender = "male",  # male
+                       illness = 0,      # no illness in past 2 weeks
+                       reduced = 4,      # 4 days of reduced activity
+                       freepoor = "yes") # free health insurance
+
+# need type="response" in order to get the proper probability prediction 
+# rather than the log odds prediction
+predict(logit, newdata = new_data, type = "response")
+
+```
+
+\newpage
+
+### d)
+
+```{r goodness of fit, message = FALSE}
+
+# McFadden's R^2
+logit_cons <- update(logit, formula = . ~ 1)
+print(1 - as.vector(logLik(logit) / logLik(logit_cons)))
+
+# ROC curve - trade-off between FPR and TPR
+library(ROCR)
+pred <- prediction(fitted(logit), dv$bin_visits)
+plot(performance(pred, "tpr", "fpr"), col="Red")
+abline(0, 1, lty=2)
+
+```
+
+McFadden's $R^2$ is an example of a so-called pseudo $R^2$. It is a typical econometric approach to measure the goodness of fit and a generalization of the traditional $R^2$, whereby we compare the likelihood of our logit model with a "naive" model consisting only of the constant. As we know the likelihood is bounded for binary response models. Thus, the resulting ratio is positive and between 0 and 1 and can be interpreted like the usual $R^2$. That is, the higher the value, the better the fit of the model.
+
+A more modern alternative from machine learning is to plot the receiver operating characteristic (ROC).
+Instead of taking the likelihood as starting point, we simply compare predicted values with actual labels of the data. We then vary the cutoff and plot a comparison between the true and the false positive rates, which characterizes the trade-off we face when picking different cut-offs.
+
+In this particular example we observe that McFadden's $R^2$ is not very high, which is not uncommon for (pseudo) $R^2$ measures. This indicates that the fit is not very good. This is also confirmed by the ROC curve. The closer the curve is to the left upper corner, the better the model is able to make accurate predictions. As we can see, the line is not very curved and is only slightly better than the diagonal benchmark, which corresponds to random guessing. We will confirm that observation in e) by using the confusion matrix.
+
+\newpage
+
+### e)
+
+First of all, we plot all possible cutoffs against the resulting accuracy in order to get a graphical overview. We can already guess from the plot that the optimal threshold should be slightly larger than 0.4.
+
+
+```{r Plot, message = FALSE}
+
+# plot accuracy wrt cutoff
+plot(performance(pred, "acc"))
+
+```
+
+
+To get the precise cut-off, we extract the optimal value from our predictions as follows:
+
+
+```{r Optimal Cutoff, message = FALSE}
+
+# find the highest accuracy and its cutoff
+acc <- performance(pred, "acc")
+
+# extract all cutoff and accuracy values
+cutoff_values <- acc@x.values[[1]]
+accuracy_values <- acc@y.values[[1]]
+
+# find the index of the highest accuracy
+highest_index <- which.max(accuracy_values)
+
+# extract the corresponding cutoff to the highest accuracy
+cutoff_opt <- cutoff_values[highest_index]
+
+print(cutoff_opt)
+print(max(accuracy_values))
+
+```
+
+
+This confirms what we expected from the plot, the optimal cut-off is 0.423 and the corresponding (highest) accuracy is 0.811. Now we are able to set up both confusion matrices:
+
+
+```{r Confusion Matrices, message = FALSE}
+
+# confusion matrix with threshold 0.5
+print(table(true = dv$bin_visits, pred = fitted(logit) > 0.5))
+
+# confusion matrix with optimal cutoff 
+print(table(true = dv$bin_visits, pred = fitted(logit) > cutoff_opt))
+
+
+```
+
+Note that a simple majority rule ("no one visits the doctor") explains almost the same amount as our logit regression:
+
+```{r Majority Rule, message = FALSE}
+# Let's just predict that no one will visit the doctor
+mean(1 - dv$bin_visits)
+```
+
+The hit rate, also known as sensitivity or true positive rate, is calculated by the following formula:
+
+$$
+\text{Hit Rate (HR)} = \frac{TP}{TP + FN} = \frac{TP}{P}
+$$
+
+We can apply the formula by extracting the corresponding numbers from the table. The true positives are found in the right lower corner, whereas the positives are simply the sum of the second row.
+
+```{r Hit rates, message = FALSE}
+
+# store both tables from the previous task
+table1 = table(true = dv$bin_visits, pred = fitted(logit) > 0.5)
+table2 = table(true = dv$bin_visits, pred = fitted(logit) > cutoff_opt)
+
+# calculate the hit rates
+hit_rate1 <- table1[2,2] / sum(table1[2,])
+hit_rate2 <- table2[2,2] / sum(table2[2,])
+
+print(hit_rate1)
+print(hit_rate2)
+
+```
+
+The result agrees with our expectations in two respects:
+
+1. The optimal cut-off is related to the higher hit rate. This makes intuitively sense, because we optimized that cut-off with respect to the better accuracy, which now eventually translates into the better prediction performance (at least on the training data).
+2. Now it becomes very obvious why our simple majority rule ("no one visits the doctor") performs almost as well as our logit model. The logit model is very weak at predicting those who did really visit the doctor.
